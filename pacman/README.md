@@ -1,0 +1,1 @@
+These files are for an AI project for auto-playing Pacman. qLearningAgents.py and valueIterationAgents.py contain code written by me, while the other files were provided as the environment for the project.
