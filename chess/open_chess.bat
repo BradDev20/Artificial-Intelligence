@@ -1,0 +1,2 @@
+cd ..\..
+powershell.exe -Command "Start-Process 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe' -ArgumentList 'https://www.chess.com/play/computer','--remote-debugging-port=9222','--user-data-dir=C:\\chrome-temp'"
