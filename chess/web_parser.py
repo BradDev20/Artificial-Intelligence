@@ -37,11 +37,43 @@ def get_board_data():
     board_data = page.evaluate(
         "() => Array.from(document.querySelectorAll('.piece')).map(p => p.className)"
     )
-    captures = page.evaluate(
-        "() => Array.from(document.querySelectorAll('.captured-pieces-cpiece')).map(p => p.className)"
-    )
 
     # Filter strings for only piece and positional data
     board_data = [_convert_piece(a) for a in board_data]
-    captures = [a[39:len(a)] for a in captures]
-    return board_data, captures
+    return board_data
+
+def determine_side():
+
+    return page.evaluate("document.querySelector('wc-chess-board.flipped') === null")
+
+def determine_last_moved():
+
+    return page.evaluate("""highlights = document.querySelectorAll('.highlight');
+    if(highlights.length !== 0){
+        e1 = highlights[0];
+        e2 = highlights[1];
+    
+        sq1 = "." + e1.classList[1];
+        sq2 = "." + e2.classList[1];
+    
+        l1 = document.querySelectorAll(sq1);
+        if(l1.length === 2){
+            if(l1[1].classList[1][0] !== 's'){
+                l1[1].classList[1][0];
+            }
+            else if(l1[0].classList[1][0] !== 's'){
+                l1[0].classList[1][0];
+            }
+        }        
+        else{
+            l2 = document.querySelectorAll(sq2);
+            if(l2.length === 2){
+                if(l2[1].classList[1][0] !== 's'){
+                l2[1].classList[1][0];
+            }
+            else{
+                l2[0].classList[1][0];
+            }
+            }
+        }
+    }""")
