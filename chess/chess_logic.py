@@ -5,174 +5,165 @@ from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 
-# PRESERVE ALL ORIGINAL TABLES AND CONSTANT VALUES
-MATERIAL = np.array([0, 100, 325, 330, 500, 950, 20000], dtype=np.int16)
+MATERIAL = (0, 100, 325, 330, 500, 950, 16383)
 
 # Pawn advancement bonus for numpy
-PAWN_ADV_WHITE = np.array([0, 0, 5, 10, 20, 35, 60, 100], dtype=np.int16)
+PAWN_ADV_WHITE = (5, 10, 20, 35, 60, 100)
 PAWN_ADV_BLACK = PAWN_ADV_WHITE[::-1]
 
-mobility_bonus = np.array([0, 0, 5, 4, 3, 2, 0], dtype=np.int8)
+mobility_bonus = (0, 0, 5, 4, 3, 2, 0)
 _notation = {'p': 1, 'n': 2, 'b': 3, 'r': 4, 'q': 5, 'k': 6}
+knight_offsets = [(1, 2), (2, 1), (2, -1), (1, -2),(-1, -2), (-2, -1), (-2, 1), (-1, 2)]
 
-# === ORIGINAL PIECE-SQUARE TABLES (PRESERVED EXACTLY) ===
+# Directional offsets, [0-3] for bishop, [4-7] for rook, all for queen
+directions = [(1, 1), (1, -1), (-1, 1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1)]
+
+# PIECE-SQUARE TABLES
 
 # Dummy board for filler info, used as a failsafe if evaluating at empty square
 dummy_table = np.zeros((8, 8), dtype=np.int16)
 
 # Pawn tables
-mg_pawn_table = np.array([
-    [0, 0, 0, 0, 0, 0, 0, 0],
-    [98, 134, 61, 95, 68, 126, 34, -11],
-    [-6, 7, 26, 31, 65, 56, 25, -20],
-    [-14, 13, 6, 21, 23, 12, 17, -23],
-    [-27, -2, -5, 12, 17, 6, 10, -25],
-    [-26, -4, -4, -10, 3, 3, 33, -12],
-    [-35, -1, -20, -23, -15, 24, 38, -22],
-    [0, 0, 0, 0, 0, 0, 0, 0],
-], dtype=np.int16)
+mg_pawn_table = (
+    (0, 0, 0, 0, 0, 0, 0, 0),
+    (98, 134, 61, 95, 68, 126, 34, -11),
+    (-6, 7, 26, 31, 65, 56, 25, -20),
+    (-14, 13, 6, 21, 23, 12, 17, -23),
+    (-27, -2, -5, 12, 17, 6, 10, -25),
+    (-26, -4, -4, -10, 3, 3, 33, -12),
+    (-35, -1, -20, -23, -15, 24, 38, -22),
+    (0, 0, 0, 0, 0, 0, 0, 0),
+)
 
-eg_pawn_table = np.array([
-    [0, 0, 0, 0, 0, 0, 0, 0],
-    [178, 173, 158, 134, 147, 132, 165, 187],
-    [94, 100, 85, 67, 56, 53, 82, 84],
-    [32, 24, 13, 5, -2, 4, 17, 17],
-    [13, 9, -3, -7, -7, -8, 3, -1],
-    [4, 7, -6, 1, 0, -5, -1, -8],
-    [13, 8, 8, 10, 13, 0, 2, -7],
-    [0, 0, 0, 0, 0, 0, 0, 0],
-], dtype=np.int16)
+eg_pawn_table = (
+    (0, 0, 0, 0, 0, 0, 0, 0),
+    (178, 173, 158, 134, 147, 132, 165, 187),
+    (94, 100, 85, 67, 56, 53, 82, 84),
+    (32, 24, 13, 5, -2, 4, 17, 17),
+    (13, 9, -3, -7, -7, -8, 3, -1),
+    (4, 7, -6, 1, 0, -5, -1, -8),
+    (13, 8, 8, 10, 13, 0, 2, -7),
+    (0, 0, 0, 0, 0, 0, 0, 0),
+)
 
 # Knight tables
-mg_knight_table = np.array([
-    [-167, -89, -34, -49, 61, -97, -15, -107],
-    [-73, -41, 72, 36, 23, 62, 7, -17],
-    [-47, 60, 37, 65, 84, 129, 73, 44],
-    [-9, 17, 19, 53, 37, 69, 18, 22],
-    [-13, 4, 16, 13, 28, 19, 21, -8],
-    [-23, -9, 12, 10, 19, 17, 25, -16],
-    [-29, -53, -12, -3, -1, 18, -14, -19],
-    [-105, -21, -58, -33, -17, -28, -19, -23],
-], dtype=np.int16)
+mg_knight_table = (
+    (-167, -89, -34, -49, 61, -97, -15, -107),
+    (-73, -41, 72, 36, 23, 62, 7, -17),
+    (-47, 60, 37, 65, 84, 129, 73, 44),
+    (-9, 17, 19, 53, 37, 69, 18, 22),
+    (-13, 4, 16, 13, 28, 19, 21, -8),
+    (-23, -9, 12, 10, 19, 17, 25, -16),
+    (-29, -53, -12, -3, -1, 18, -14, -19),
+    (-105, -21, -58, -33, -17, -28, -19, -23),
+)
 
-eg_knight_table = np.array([
-    [-58, -38, -13, -28, -31, -27, -63, -99],
-    [-25, -8, -25, -2, -9, -25, -24, -52],
-    [-24, -20, 10, 9, -1, -9, -19, -41],
-    [-17, 3, 22, 22, 22, 11, 8, -18],
-    [-18, -6, 16, 25, 16, 17, 4, -18],
-    [-23, -3, -1, 15, 10, -3, -20, -22],
-    [-42, -20, -10, -5, -2, -20, -23, -44],
-    [-29, -51, -23, -15, -22, -18, -50, -64],
-], dtype=np.int16)
+eg_knight_table = (
+    (-58, -38, -13, -28, -31, -27, -63, -99),
+    (-25, -8, -25, -2, -9, -25, -24, -52),
+    (-24, -20, 10, 9, -1, -9, -19, -41),
+    (-17, 3, 22, 22, 22, 11, 8, -18),
+    (-18, -6, 16, 25, 16, 17, 4, -18),
+    (-23, -3, -1, 15, 10, -3, -20, -22),
+    (-42, -20, -10, -5, -2, -20, -23, -44),
+    (-29, -51, -23, -15, -22, -18, -50, -64),
+)
 
 # Bishop tables
-mg_bishop_table = np.array([
-    [-29, 4, -82, -37, -25, -42, 7, -8],
-    [-26, 16, -18, -13, 30, 59, 18, -47],
-    [-16, 37, 43, 40, 35, 50, 37, -2],
-    [-4, 5, 19, 50, 37, 37, 7, -2],
-    [-6, 13, 13, 26, 34, 12, 10, 4],
-    [0, 15, 15, 15, 14, 27, 18, 10],
-    [4, 15, 16, 0, 7, 21, 33, 1],
-    [-33, -3, -14, -21, -13, -12, -39, -21],
-], dtype=np.int32)
+mg_bishop_table = (
+    (-29, 4, -82, -37, -25, -42, 7, -8),
+    (-26, 16, -18, -13, 30, 59, 18, -47),
+    (-16, 37, 43, 40, 35, 50, 37, -2),
+    (-4, 5, 19, 50, 37, 37, 7, -2),
+    (-6, 13, 13, 26, 34, 12, 10, 4),
+    (0, 15, 15, 15, 14, 27, 18, 10),
+    (4, 15, 16, 0, 7, 21, 33, 1),
+    (-33, -3, -14, -21, -13, -12, -39, -21),
+)
 
-eg_bishop_table = np.array([
-    [-14, -21, -11, -8, -7, -9, -17, -24],
-    [-8, -4, 7, -12, -3, -13, -4, -14],
-    [2, -8, 0, -1, -2, 6, 0, 4],
-    [-3, 9, 12, 9, 14, 10, 3, 2],
-    [-6, 3, 13, 19, 7, 10, -3, -9],
-    [-12, -3, 8, 10, 13, 3, -7, -15],
-    [-14, -18, -7, -1, 4, -9, -15, -27],
-    [-23, -9, -23, -5, -9, -16, -5, -17],
-], dtype=np.int16)
+eg_bishop_table = (
+    (-14, -21, -11, -8, -7, -9, -17, -24),
+    (-8, -4, 7, -12, -3, -13, -4, -14),
+    (2, -8, 0, -1, -2, 6, 0, 4),
+    (-3, 9, 12, 9, 14, 10, 3, 2),
+    (-6, 3, 13, 19, 7, 10, -3, -9),
+    (-12, -3, 8, 10, 13, 3, -7, -15),
+    (-14, -18, -7, -1, 4, -9, -15, -27),
+    (-23, -9, -23, -5, -9, -16, -5, -17),
+)
 
 # Rook tables
-mg_rook_table = np.array([
-    [32, 42, 32, 51, 63, 9, 31, 43],
-    [27, 32, 58, 62, 80, 67, 26, 44],
-    [-5, 19, 26, 36, 17, 45, 61, 16],
-    [-24, -11, 7, 26, 24, 35, -8, -20],
-    [-36, -26, -12, -1, 9, -7, 6, -23],
-    [-45, -25, -16, -17, 3, 0, -5, -33],
-    [-44, -16, -20, -9, -1, 11, -6, -71],
-    [-19, -13, 1, 17, 16, 7, -37, -26],
-], dtype=np.int16)
+mg_rook_table = (
+    (32, 42, 32, 51, 63, 9, 31, 43),
+    (27, 32, 58, 62, 80, 67, 26, 44),
+    (-5, 19, 26, 36, 17, 45, 61, 16),
+    (-24, -11, 7, 26, 24, 35, -8, -20),
+    (-36, -26, -12, -1, 9, -7, 6, -23),
+    (-45, -25, -16, -17, 3, 0, -5, -33),
+    (-44, -16, -20, -9, -1, 11, -6, -71),
+    (-19, -13, 1, 17, 16, 7, -37, -26),
+)
 
-eg_rook_table = np.array([
-    [13, 10, 18, 15, 12, 12, 8, 5],
-    [11, 13, 13, 11, -3, 3, 8, 3],
-    [7, 7, 7, 5, 4, -3, -5, -3],
-    [4, 3, 13, 1, 2, 1, -1, 2],
-    [3, 5, 8, 4, -5, -6, -8, -11],
-    [-4, 0, -5, -1, -7, -12, -8, -16],
-    [-6, -6, 0, 2, -9, -9, -11, -3],
-    [-9, 2, 3, -1, -5, -13, 4, -20],
-], dtype=np.int16)
+eg_rook_table = (
+    (13, 10, 18, 15, 12, 12, 8, 5),
+    (11, 13, 13, 11, -3, 3, 8, 3),
+    (7, 7, 7, 5, 4, -3, -5, -3),
+    (4, 3, 13, 1, 2, 1, -1, 2),
+    (3, 5, 8, 4, -5, -6, -8, -11),
+    (-4, 0, -5, -1, -7, -12, -8, -16),
+    (-6, -6, 0, 2, -9, -9, -11, -3),
+    (-9, 2, 3, -1, -5, -13, 4, -20),
+)
 
 # Queen tables
-mg_queen_table = np.array([
-    [-28, 0, 29, 12, 59, 44, 43, 45],
-    [-24, -39, -5, 1, -16, 57, 28, 54],
-    [-13, -17, 7, 8, 29, 56, 47, 57],
-    [-27, -27, -16, -16, -1, 17, -2, 1],
-    [-9, -26, -9, -10, -2, -4, 3, -3],
-    [-14, 2, -11, -2, -5, 2, 14, 5],
-    [-35, -8, 11, 2, 8, 15, -3, 1],
-    [-1, -18, -9, 10, -15, -25, -31, -50],
-], dtype=np.int16)
+mg_queen_table = (
+    (-28, 0, 29, 12, 59, 44, 43, 45),
+    (-24, -39, -5, 1, -16, 57, 28, 54),
+    (-13, -17, 7, 8, 29, 56, 47, 57),
+    (-27, -27, -16, -16, -1, 17, -2, 1),
+    (-9, -26, -9, -10, -2, -4, 3, -3),
+    (-14, 2, -11, -2, -5, 2, 14, 5),
+    (-35, -8, 11, 2, 8, 15, -3, 1),
+    (-1, -18, -9, 10, -15, -25, -31, -50),
+)
 
-eg_queen_table = np.array([
-    [-9, 22, 22, 27, 27, 19, 10, 20],
-    [-17, 20, 32, 41, 58, 25, 30, 0],
-    [-20, 6, 9, 49, 47, 35, 19, 9],
-    [3, 22, 24, 45, 57, 40, 57, 36],
-    [-18, 28, 19, 47, 31, 34, 39, 23],
-    [-16, -27, 15, 6, 9, 17, 10, 5],
-    [-22, -23, -30, -16, -16, -23, -36, -32],
-    [-33, -28, -22, -43, -5, -32, -20, -41],
-], dtype=np.int16)
+eg_queen_table = (
+    (-9, 22, 22, 27, 27, 19, 10, 20),
+    (-17, 20, 32, 41, 58, 25, 30, 0),
+    (-20, 6, 9, 49, 47, 35, 19, 9),
+    (3, 22, 24, 45, 57, 40, 57, 36),
+    (-18, 28, 19, 47, 31, 34, 39, 23),
+    (-16, -27, 15, 6, 9, 17, 10, 5),
+    (-22, -23, -30, -16, -16, -23, -36, -32),
+    (-33, -28, -22, -43, -5, -32, -20, -41),
+)
 
 # King tables
-mg_king_table = np.array([
-    [-65, 23, 16, -15, -56, -34, 2, 13],
-    [29, -1, -20, -7, -8, -4, -38, -29],
-    [-9, 24, 2, -16, -20, 6, 22, -22],
-    [-17, -20, -12, -27, -30, -25, -14, -36],
-    [-49, -1, -27, -39, -46, -44, -33, -51],
-    [-14, -14, -22, -46, -44, -30, -15, -27],
-    [1, 7, -8, -64, -43, -16, 9, 8],
-    [-15, 36, 12, -54, 8, -28, 24, 14],
-], dtype=np.int16)
+mg_king_table = (
+    (-65, 23, 16, -15, -56, -34, 2, 13),
+    (29, -1, -20, -7, -8, -4, -38, -29),
+    (-9, 24, 2, -16, -20, 6, 22, -22),
+    (-17, -20, -12, -27, -30, -25, -14, -36),
+    (-49, -1, -27, -39, -46, -44, -33, -51),
+    (-14, -14, -22, -46, -44, -30, -15, -27),
+    (1, 7, -8, -64, -43, -16, 9, 8),
+    (-15, 36, 12, -54, 8, -28, 24, 14),
+)
 
-eg_king_table = np.array([
-    [-74, -35, -18, -18, -11, 15, 4, -17],
-    [-12, 17, 14, 17, 17, 38, 23, 11],
-    [10, 17, 23, 15, 20, 45, 44, 13],
-    [-8, 22, 24, 27, 26, 33, 26, 3],
-    [-18, -4, 21, 24, 27, 23, 9, -11],
-    [-19, -3, 11, 21, 23, 16, 7, -9],
-    [-27, -11, 4, 13, 14, 4, -5, -17],
-    [-53, -34, -21, -11, -28, -14, -24, -43],
-], dtype=np.int16)
+eg_king_table = (
+    (-74, -35, -18, -18, -11, 15, 4, -17),
+    (-12, 17, 14, 17, 17, 38, 23, 11),
+    (10, 17, 23, 15, 20, 45, 44, 13),
+    (-8, 22, 24, 27, 26, 33, 26, 3),
+    (-18, -4, 21, 24, 27, 23, 9, -11),
+    (-19, -3, 11, 21, 23, 16, 7, -9),
+    (-27, -11, 4, 13, 14, 4, -5, -17),
+    (-53, -34, -21, -11, -28, -14, -24, -43),
+)
 
 # construct 2d arrays into one 3d one
-MGPST_WHITE = np.zeros((7, 8, 8), dtype=np.int16)
-EGPST_WHITE = np.zeros((7, 8, 8), dtype=np.int16)
-
-for _, table in enumerate(
-        [dummy_table, mg_pawn_table, mg_knight_table, mg_bishop_table, mg_rook_table, mg_queen_table, mg_king_table]):
-    MGPST_WHITE[_] = table
-
-for _, table in enumerate(
-        [dummy_table, eg_pawn_table, eg_knight_table, eg_bishop_table, eg_rook_table, eg_queen_table, eg_king_table]):
-    EGPST_WHITE[_] = table
-
-# mirror values for black
-MGPST_BLACK = MGPST_WHITE[:, :, ::-1]
-EGPST_BLACK = EGPST_WHITE[:, :, ::-1]
+MGPST = (dummy_table, mg_pawn_table, mg_knight_table, mg_bishop_table, mg_rook_table, mg_queen_table, mg_king_table)
+EGPST = (dummy_table, eg_pawn_table, eg_knight_table, eg_bishop_table, eg_rook_table, eg_queen_table, eg_king_table)
 
 # === ORIGINAL ZOBRIST HASH DEFINITIONS (PRESERVED EXACTLY) ===
 
@@ -185,23 +176,26 @@ for kind in range(1, 7):
                 ZOBRIST_TABLE[(kind, color, x, y)] = random.getrandbits(64)
 
 SIDE_HASH = random.getrandbits(64)
-CASTLE_HASH = [[random.getrandbits(64) for _ in range(2)] for _ in range(4)]
+CASTLE_HASH = [random.getrandbits(64) for _ in range(4)]
 EP_HASH = [[random.getrandbits(64) for _ in range(9)] for _ in range(2)]
 
 
 def get_initial_hash(state):
     h = 0
+
+    # Pieces
     for p in state.board.values():
         h ^= ZOBRIST_TABLE[(p[1], p[0], p[2], p[3])]
 
-    # Castling rights (only if enabled)
+    # Castling rights
     for i in range(4):
         if state.metadata[i]:
-            h ^= CASTLE_HASH[i][state.metadata[i]]
+            h ^= CASTLE_HASH[i]
 
-    # En passant file (if any)
-    if state.metadata[4] != 0:
-        h ^= EP_HASH[0][self.metadata[4]]
+    # En passant (file + side)
+    if state.metadata[4]:
+        side = state.metadata[6]
+        h ^= EP_HASH[side][state.metadata[4]]
 
     # Side to move
     if state.metadata[6]:
@@ -221,6 +215,11 @@ class UndoRecord:
     captured_np: int | None
     old_metadata: bytearray
     rook_move: tuple | None  # (rook, rook_src, rook_dst)
+    material_delta: int
+    pst_mg_delta: int
+    pst_eg_delta: int
+    old_king_sq: tuple | None
+    old_hash: int
 
 
 # === PERFORMANCE OPTIMIZATION CACHES ===
@@ -235,11 +234,15 @@ class GameState:
     def __init__(self, board=None):
         self.board = {}
         self.board_np = np.zeros((8, 8), dtype=np.int8)
+        self.material = 0
+        self.pst_mg = 0
+        self.pst_eg = 0
+        self.kings = [None, None]
 
         # each piece is a bytearray
         # each bytearray is [color(black or white), type, x, y]
         for piece in board:
-            new_piece = np.array([0, 0, 0, 0], dtype=np.int8)
+            new_piece = bytearray(b'\x00\x00\x00\x00')
             new_piece[0] = piece[0] == 'w'
             new_piece[1] = _notation[piece[1]]
             new_piece[2] = int(piece[2])
@@ -250,16 +253,24 @@ class GameState:
             sign = 1 if new_piece[0] else -1
             self.board_np[new_piece[3] - 1, new_piece[2] - 1] = sign * new_piece[1]
 
+            self.material += MATERIAL[new_piece[1]] * sign
+
+            if new_piece[1] == 6:
+                self.kings[new_piece[0]] = (new_piece[2], new_piece[3])
+
+        for p in self.board.values():
+            sq = (p[3] - 1) * 8 + (p[2] - 1)
+            self.pst_mg += self._getPSTValue(p[1], p[0], sq, False)
+            self.pst_eg += self._getPSTValue(p[1], p[0], sq, True)
+
         # METADATA
         # Bytes 1-4: Castling Rights - White Kingside, White Queenside, Black Kingside, Black Queenside
         # Bytes 5-6: En Passant x y coordinates
         # Byte 7: Current turn; 1 for white 0 for black
         self.metadata = bytearray(b'\x01\x01\x01\x01\x00\x00\x01')
-
         self.hash = get_initial_hash(self)
 
         # === NEW: Performance caches ===
-        self._pst_cache = {}
         self._attack_cache = {True: np.zeros((8, 8), dtype=bool),
                               False: np.zeros((8, 8), dtype=bool)}
         self._attacks_dirty = True
@@ -275,30 +286,21 @@ class GameState:
         # Pawn attacks
         direction = 1 if byWhite else -1
         for dx in (-1, 1):
-            p = self.pieceAt((x + dx, y - direction))
+            p = self.board.get((x + dx, y - direction))
             if p is not None and p[1] == 1 and p[0] == byWhite:
                 return True
 
         # Knight attacks
-        knight_offsets = [
-            (1, 2), (2, 1), (2, -1), (1, -2),
-            (-1, -2), (-2, -1), (-2, 1), (-1, 2)
-        ]
         for dx, dy in knight_offsets:
-            p = self.pieceAt((x + dx, y + dy))
+            p = self.board.get((x + dx, y + dy))
             if p is not None and p[1] == 2 and p[0] == byWhite:
                 return True
 
         # Sliding pieces
-        directions = [
-            (1, 0), (-1, 0), (0, 1), (0, -1),  # rook
-            (1, 1), (1, -1), (-1, 1), (-1, -1)  # bishop
-        ]
-
         for dx, dy in directions:
             cx, cy = x + dx, y + dy
             while 1 <= cx <= 8 and 1 <= cy <= 8:
-                p = self.pieceAt((cx, cy))
+                p = self.board.get((cx, cy))
                 if p is not None:
                     if p[0] == byWhite:
                         if (
@@ -315,7 +317,7 @@ class GameState:
             for dy in (-1, 0, 1):
                 if dx == dy == 0:
                     continue
-                p = self.pieceAt((x + dx, y + dy))
+                p = self.board.get((x + dx, y + dy))
                 if p is not None and p[1] == 6 and p[0] == byWhite:
                     return True
 
@@ -336,19 +338,19 @@ class GameState:
 
             # One square forward
             fwd = (x, y + direction)
-            if inBounds(*fwd) and self.pieceAt(fwd) is None:
+            if inBounds(*fwd) and self.board.get(fwd) is None:
                 moves.append(fwd)
 
                 # Two squares forward
                 fwd2 = (x, y + 2 * direction)
-                if y == start_rank and self.pieceAt(fwd) is None and self.pieceAt(fwd2) is None:
+                if y == start_rank and self.board.get(fwd) is None and self.board.get(fwd2) is None:
                     moves.append(fwd2)
 
             # Captures
             for dx in (-1, 1):
                 cap = (x + dx, y + direction)
                 if inBounds(*cap):
-                    p = self.pieceAt(cap)
+                    p = self.board.get(cap)
                     if p is not None and p[0] != isWhite:
                         moves.append(cap)
 
@@ -366,7 +368,7 @@ class GameState:
                 nx, ny = x + dx, y + dy
                 if not inBounds(nx, ny):
                     continue
-                p = self.pieceAt((nx, ny))
+                p = self.board.get((nx, ny))
                 if p is None or p[0] != isWhite:
                     moves.append((nx, ny))
 
@@ -379,54 +381,46 @@ class GameState:
                     nx, ny = x + dx, y + dy
                     if not inBounds(nx, ny):
                         continue
-                    p = self.pieceAt((nx, ny))
+                    p = self.board.get((nx, ny))
                     if p is None or p[0] != isWhite:
                         moves.append((nx, ny))
             # Castling
 
             if piece[0]:
                 if (piece[2], piece[3]) == (5, 1):
-                    rook1 = self.pieceAt((8, 1))
-                    rook2 = self.pieceAt((1, 1))
+                    rook1 = self.board.get((8, 1))
+                    rook2 = self.board.get((1, 1))
 
                     # Kingside castling
                     if rook1 is not None and rook1[1] == 4 and rook1[0] and self.metadata[0]:
-                        if self.pieceAt((6, 1)) is None and self.pieceAt((7, 1)) is None:
-                            if not (self.isSquareAttacked((5, 1), False) or self.isSquareAttacked((6, 1),
-                                                                                                  False) or self.isSquareAttacked(
-                                    (7, 1), False)):
+                        if self.board.get((6, 1)) is None and self.board.get((7, 1)) is None:
+                            if not (self.isSquareAttacked((5, 1), False) or self.isSquareAttacked((6, 1),False) or self.isSquareAttacked((7, 1), False)):
                                 moves.append((7, 1))
 
                     # Queenside castling
                     if rook2 is not None and rook2[1] == 4 and rook2[0] and self.metadata[1]:
-                        if self.pieceAt((4, 1)) is None and self.pieceAt((3, 1)) is None and self.pieceAt(
+                        if self.board.get((4, 1)) is None and self.board.get((3, 1)) is None and self.board.get(
                                 (2, 1)) is None:
-                            if not (self.isSquareAttacked((5, 1), False) or self.isSquareAttacked((4, 1),
-                                                                                                  False) or self.isSquareAttacked(
-                                    (3, 1), False)):
+                            if not (self.isSquareAttacked((5, 1), False) or self.isSquareAttacked((4, 1),False) or self.isSquareAttacked((3, 1), False)):
                                 moves.append((3, 1))
 
                     del rook1, rook2
             else:
                 if (piece[2], piece[3]) == (5, 8):
-                    rook1 = self.pieceAt((8, 8))
-                    rook2 = self.pieceAt((1, 8))
+                    rook1 = self.board.get((8, 8))
+                    rook2 = self.board.get((1, 8))
 
                     # Kingside castling
                     if rook1 is not None and rook1[1] == 4 and not rook1[0] and self.metadata[2]:
-                        if self.pieceAt((6, 8)) is None and self.pieceAt((7, 8)) is None:
-                            if not (self.isSquareAttacked((5, 8), True) or self.isSquareAttacked((6, 8),
-                                                                                                 True) or self.isSquareAttacked(
-                                    (7, 8), True)):
+                        if self.board.get((6, 8)) is None and self.board.get((7, 8)) is None:
+                            if not (self.isSquareAttacked((5, 8), True) or self.isSquareAttacked((6, 8),True) or self.isSquareAttacked((7, 8), True)):
                                 moves.append((7, 8))
 
                     # Queenside castling
                     if rook2 is not None and rook2[1] == 4 and not rook2[0] and self.metadata[3]:
-                        if self.pieceAt((4, 8)) is None and self.pieceAt((3, 8)) is None and self.pieceAt(
+                        if self.board.get((4, 8)) is None and self.board.get((3, 8)) is None and self.board.get(
                                 (2, 8)) is None:
-                            if not (self.isSquareAttacked((5, 8), True) or self.isSquareAttacked((4, 8),
-                                                                                                 True) or self.isSquareAttacked(
-                                    (3, 8), True)):
+                            if not (self.isSquareAttacked((5, 8), True) or self.isSquareAttacked((4, 8),True) or self.isSquareAttacked((3, 8), True)):
                                 moves.append((3, 8))
 
                     del rook1, rook2
@@ -434,19 +428,17 @@ class GameState:
         # SLIDING PIECES
         else:
             if piece[1] == 3:  # Bishop
-                directions = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
+                start, end = 0, 4
             elif piece[1] == 4:  # Rook
-                directions = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                start, end = 4, 8
             else:  # Queen
-                directions = [
-                    (1, 1), (1, -1), (-1, 1), (-1, -1),
-                    (1, 0), (-1, 0), (0, 1), (0, -1)
-                ]
+                start, end = 0, 8
 
-            for dx, dy in directions:
+            for i in range(start, end):
+                dx, dy = directions[i][0], directions[i][1]
                 nx, ny = x + dx, y + dy
                 while inBounds(nx, ny):
-                    p = self.pieceAt((nx, ny))
+                    p = self.board.get((nx, ny))
                     if p is None:
                         moves.append((nx, ny))
                     else:
@@ -481,18 +473,20 @@ class GameState:
 
     def getAllLegalActions(self, whiteToMove):
         actions = []
-        pieces = list(self.board.values())
 
-        for piece in pieces:
+        for piece in tuple(self.board.values()):
             if piece[0] != whiteToMove:
                 continue
 
             x, y = piece[2], piece[3]
             src = (y - 1) * 8 + (x - 1)
 
-            for (nx, ny) in self._getPseudoLegalMoves(piece):
+            for nx, ny in self._getPseudoLegalMoves(piece):
                 dst = (ny - 1) * 8 + (nx - 1)
-                actions.append((src, dst))
+                undo = self.makeMove((src, dst))
+                if not self.kingInCheck(not self.sideToMove()):
+                    actions.append((src, dst))
+                self.undoMove(undo)
 
         return actions
 
@@ -511,55 +505,27 @@ class GameState:
 
     # === OPTIMIZED getScore WITH PST INTEGRATION ===
 
-    def _getPSTValue(self, piece_type, color, square, is_endgame):
-        """Cached PST lookup"""
-        key = (piece_type, color, square, is_endgame)
-        if key not in self._pst_cache:
-            rank, file = divmod(square, 8)
-            if color == 0:  # Black: mirror vertically
-                rank = 7 - rank
+    def _getPSTValue(self, piece_type, is_white, square, is_endgame):
+        rank = square >> 3  # square // 8
+        file = square & 7  # square % 8
 
-            table = EGPST_WHITE if is_endgame else MGPST_WHITE
-            value = table[piece_type, rank, file] * (1 if color == 1 else -1)
-            self._pst_cache[key] = value
-        return self._pst_cache[key]
+        if not is_white:
+            rank = 7 - rank
+
+        table = EGPST if is_endgame else MGPST
+        v = table[piece_type][rank][file]
+
+        return v if is_white else -v
 
     def getScore(self):
-        """Optimized evaluation with full PST integration"""
-        board_np = self.board_np
-        piece_ids = np.abs(board_np)
+        # material + incremental PST
+        pst = self.PSTScore()
+        score = self.material + pst
 
-        # Fast material calculation
-        material = np.sum(MATERIAL[piece_ids] * np.sign(board_np))
+        # Small tempo bonus
+        score += 10 if self.sideToMove() else -10
 
-        # Early exit for decisive material advantage
-        if abs(material) > 2500:
-            return material + (10 if self.sideToMove() else -10)
-
-        # Determine game phase once
-        is_endgame = self.isEndgame()
-
-        # PST Score calculation
-        white_mask = board_np > 0
-        black_mask = board_np < 0
-
-        white_squares = np.flatnonzero(white_mask)
-        black_squares = np.flatnonzero(black_mask)
-
-        pst_score = 0
-
-        # Sum PST values for all pieces
-        for sq in white_squares:
-            piece_type = piece_ids.flat[sq]
-            pst_score += self._getPSTValue(piece_type, 1, sq, is_endgame)
-
-        for sq in black_squares:
-            piece_type = piece_ids.flat[sq]
-            pst_score += self._getPSTValue(piece_type, 0, sq, is_endgame)
-
-        score = material + pst_score
-
-        # Lazy evaluation for close positions
+        # Optional secondary evals only for close positions
         if abs(score) < 1500:
             score += self._getPawnStructureEval()
             score += self._getMobilityEval()
@@ -568,31 +534,32 @@ class GameState:
         return score
 
     def _getPawnStructureEval(self):
-        """Simplified pawn structure evaluation"""
-        board_np = self.board_np
-        white_pawns = board_np == 1
-        black_pawns = board_np == -1
+        white_files = [0] * 8
+        black_files = [0] * 8
 
-        # Doubled pawn penalty
-        w_files = np.sum(white_pawns, axis=0)
-        b_files = np.sum(black_pawns, axis=0)
-        doubled = np.sum(np.maximum(w_files - 1, 0)) - np.sum(np.maximum(b_files - 1, 0))
+        for p in self.board.values():
+            if p[1] == 1:
+                if p[0]:
+                    white_files[p[2] - 1] += 1
+                else:
+                    black_files[p[2] - 1] += 1
 
-        # Passed pawn advancement
-        white_adv = np.sum(PAWN_ADV_WHITE * white_pawns.T)
-        black_adv = np.sum(PAWN_ADV_BLACK * black_pawns.T)
+        doubled = 0
+        for i in range(8):
+            if white_files[i] > 1:
+                doubled -= 12 * (white_files[i] - 1)
+            if black_files[i] > 1:
+                doubled += 12 * (black_files[i] - 1)
 
-        return -doubled * 12 + white_adv - black_adv
+        return doubled
 
     def _getMobilityEval(self):
-        """Simplified mobility evaluation"""
-        board_np = self.board_np
-        knights = np.count_nonzero(np.abs(board_np) == 2)
-        bishops = np.count_nonzero(np.abs(board_np) == 3)
-        rooks = np.count_nonzero(np.abs(board_np) == 4)
-        queens = np.count_nonzero(np.abs(board_np) == 5)
-
-        return (knights + bishops) * 5 + (rooks + queens) * 3
+        score = 0
+        for p in self.board.values():
+            if p[1] in (2, 3, 4, 5):  # N B R Q
+                s = 5 if p[1] in (2, 3) else 3
+                score += s if p[0] else -s
+        return score
 
     def _getKingSafetyEval(self):
         """Simplified king safety evaluation"""
@@ -609,210 +576,205 @@ class GameState:
     # === ORIGINAL makeMove WITH _attacks_dirty INTEGRATION ===
 
     def makeMove(self, action) -> UndoRecord:
-        src = ((action[0] % 8) + 1, (action[0] // 8) + 1)
-        dst = ((action[1] % 8) + 1, (action[1] // 8) + 1)
-
-        # used for numpy
+        # === Setup ===
+        src_idx, dst_idx = action
+        src = ((src_idx % 8) + 1, (src_idx // 8) + 1)
+        dst = ((dst_idx % 8) + 1, (dst_idx // 8) + 1)
         sy, sx = src[1] - 1, src[0] - 1
         dy, dx = dst[1] - 1, dst[0] - 1
 
-        piece = self.pieceAt(src)
-        captured = self.pieceAt(dst)
+        piece = self.board[src]
+        captured = self.board.get(dst)
+        old_meta = bytearray(self.metadata)
+        old_castle = old_meta[:4]
 
-        moved_np = self.board_np[sy, sx]
-        captured_np = self.board_np[dy, dx] if captured is not None else None
+        # Precompute castling info
+        is_castle = (piece[1] == 6 and abs(dst[0] - src[0]) == 2)
+        rook_src = rook_dst = None
+        if is_castle:
+            rook_src = (8, src[1]) if dst[0] == 7 else (1, src[1])
+            rook_dst = (6, src[1]) if dst[0] == 7 else (4, src[1])
 
         undo = UndoRecord(
-            moved_piece=piece,
-            moved_np=moved_np,
-            src=src,
-            dst=dst,
-            captured_piece=captured,
-            captured_square=dst if captured is not None else None,
-            captured_np=captured_np,
-            old_metadata=bytearray(self.metadata),
-            rook_move=None
+            moved_piece=piece.copy(),
+            moved_np=self.board_np[sy, sx],
+            src=src, dst=dst,
+            captured_piece=None, captured_square=None, captured_np=None,
+            old_metadata=old_meta,
+            rook_move=None,
+            material_delta=0, pst_mg_delta=0, pst_eg_delta=0,
+            old_king_sq=self.kings[piece[0]] if piece[1] == 6 else None,
+            old_hash=self.hash
         )
 
-        # --- HASH CORRECTIONS START ---
+        # === Structural Board Updates ===
 
-        # Store old values before any changes
-        old_ep_file = self.metadata[4]
-
-        # XOR out old en passant file if it existed
-        if old_ep_file != 0:
-            self.hash ^= EP_HASH[0][old_ep_file]
-
-        # XOR out castling rights that will be lost
-        if piece[1] == 6:  # King moves - lose both castling rights
-            color_offset = 0 if piece[0] else 2
-            for i in range(color_offset, color_offset + 2):
-                if self.metadata[i]:
-                    self.hash ^= CASTLE_HASH[i][self.metadata[i]]
-                    self.metadata[i] = 0
-        elif piece[1] == 4:  # Rook moves - lose that specific castling right
-            if piece[0]:  # White
-                if src == (1, 1) and self.metadata[1]:  # Queenside rook
-                    self.hash ^= CASTLE_HASH[1][self.metadata[1]]
-                    self.metadata[1] = 0
-                elif src == (8, 1) and self.metadata[0]:  # Kingside rook
-                    self.hash ^= CASTLE_HASH[0][self.metadata[0]]
-                    self.metadata[0] = 0
-            else:  # Black
-                if src == (1, 8) and self.metadata[3]:  # Queenside rook
-                    self.hash ^= CASTLE_HASH[3][self.metadata[3]]
-                    self.metadata[3] = 0
-                elif src == (8, 8) and self.metadata[2]:  # Kingside rook
-                    self.hash ^= CASTLE_HASH[2][self.metadata[2]]
-                    self.metadata[2] = 0
-
-        # XOR out moving piece from old position
-        self.hash ^= ZOBRIST_TABLE[(piece[1], piece[0], src[0], src[1])]
-
-        # --- ORIGINAL MOVE LOGIC ---
-        # remove captured piece
-        if captured is not None:
-            # XOR captured piece
-            self.hash ^= ZOBRIST_TABLE[(captured[1], captured[0], dst[0], dst[1])]
-            del self.board[dst]
-
-        # en passant capture
-        if piece[1] == 1 and dst == (self.metadata[4], self.metadata[5]):
-            cap_sq = (dst[0], src[1])
-            ep_piece = self.board.get(cap_sq)
-
-            # validate en-passant
-            if ep_piece is not None:
-                undo.captured_piece = ep_piece
-                undo.captured_square = cap_sq
-                undo.captured_np = self.board_np[cap_sq[1] - 1, cap_sq[0] - 1]
-
-                # XOR out captured pawn
-                self.hash ^= ZOBRIST_TABLE[(ep_piece[1], ep_piece[0], cap_sq[0], cap_sq[1])]
-
-                del self.board[cap_sq]
-                self.board_np[cap_sq[1] - 1, cap_sq[0] - 1] = 0
-
-        # move piece
+        # Remove moving piece from source square
         del self.board[src]
+        self.board_np[sy, sx] = 0
+
+        # Handle normal capture
+        if captured:
+            undo.captured_piece = captured
+            undo.captured_square = dst
+            undo.captured_np = self.board_np[dy, dx]
+
+            if captured[1] == 4:
+                side = 0 if captured[0] else 2
+                if captured[2] == 1:
+                    self.metadata[side + 1] = 0
+                elif captured[2] == 8:
+                    self.metadata[side] = 0
+
+        # === En passant (DEFENSIVE) ===
+        ep_sq = None
+        if (
+                piece[1] == 1 and
+                abs(dst[0] - src[0]) == 1 and
+                (dst[0], dst[1]) == (old_meta[4], old_meta[5])
+        ):
+            direction = 1 if piece[0] else -1
+            candidate_sq = (dst[0], dst[1] - direction)
+            ep_piece = self.board.get(candidate_sq)
+
+            # Only capture if the pawn is actually there and valid
+            if ep_piece and ep_piece[1] == 1 and ep_piece[0] != piece[0]:
+                ep_sq = candidate_sq
+                undo.captured_piece = ep_piece
+                undo.captured_square = ep_sq
+                undo.captured_np = self.board_np[ep_sq[1] - 1, ep_sq[0] - 1]
+                del self.board[ep_sq]
+
+        # Place moving piece
         piece[2], piece[3] = dst
         self.board[dst] = piece
+        self.board_np[dy, dx] = undo.moved_np
 
-        self.board_np[sy, sx] = 0
-        self.board_np[dy, dx] = moved_np
+        if piece[1] == 6:
+            self.kings[piece[0]] = dst
 
-        # XOR moving the piece to new position
-        self.hash ^= ZOBRIST_TABLE[(piece[1], piece[0], dst[0], dst[1])]
+        # Handle castling rook move
+        if is_castle:
+            rook = self.board[rook_src]
+            undo.rook_move = (rook.copy(), rook_src, rook_dst)
 
-        # castling
-        if piece[1] == 6 and abs(dst[0] - src[0]) == 2:
-            if dst[0] == 7:  # kingside
-                rook_src, rook_dst = (8, src[1]), (6, src[1])
-            else:  # queenside
-                rook_src, rook_dst = (1, src[1]), (4, src[1])
+            del self.board[rook_src]
+            rook[2], rook[3] = rook_dst
+            self.board[rook_dst] = rook
+            self.board_np[rook_dst[1] - 1, rook_dst[0] - 1] = 4 if piece[0] else -4
+            self.board_np[rook_src[1] - 1, rook_src[0] - 1] = 0
 
-            rook = self.pieceAt(rook_src)
-            if rook is not None:
-                # XOR out old rook and XOR in new one
-                self.hash ^= ZOBRIST_TABLE[(rook[1], rook[0], rook_src[0], rook_src[1])]
-                del self.board[rook_src]
-                self.board_np[rook_src[1] - 1, rook_src[0] - 1] = 0
+        # Remove EP pawn from numpy board
+        if ep_sq:
+            self.board_np[ep_sq[1] - 1, ep_sq[0] - 1] = 0
 
-                rook[2], rook[3] = rook_dst
-                self.board[rook_dst] = rook
-                self.board_np[rook_dst[1] - 1, rook_dst[0] - 1] = 4 if rook[0] else -4
+        # Update castling rights
+        if piece[1] == 6:
+            if piece[0]:
+                self.metadata[0] = self.metadata[1] = 0
+            else:
+                self.metadata[2] = self.metadata[3] = 0
+        elif piece[1] == 4:
+            if piece[0]:
+                if src == (1, 1):
+                    self.metadata[1] = 0
+                elif src == (8, 1):
+                    self.metadata[0] = 0
+            else:
+                if src == (1, 8):
+                    self.metadata[3] = 0
+                elif src == (8, 8):
+                    self.metadata[2] = 0
 
-                self.hash ^= ZOBRIST_TABLE[(rook[1], rook[0], rook_dst[0], rook_dst[1])]
-                undo.rook_move = (rook, rook_src, rook_dst)
+        # Clear EP
+        self.metadata[4] = 0
+        self.metadata[5] = 0
 
-        # --- FINAL HASH UPDATES ---
-
-        # Update en passant square
-        self.metadata[4] = self.metadata[5] = 0
+        # Set new EP target
         if piece[1] == 1 and abs(dst[1] - src[1]) == 2:
             self.metadata[4] = src[0]
             self.metadata[5] = (src[1] + dst[1]) // 2
-            self.hash ^= EP_HASH[0][self.metadata[4]]  # XOR in new EP file
 
-        # Flip turn
+        # Flip side
         self.metadata[6] ^= 1
-        self.hash ^= SIDE_HASH
 
-        # === NEW: Invalidate attack cache after board state changes ===
-        self._attacks_dirty = True  # Invalidate attack cache
+        # Recompute hash (simple + safe)
+        self.hash = self._recalculate_hash()
 
+        # === Evaluation updates ===
+        mg_delta = (
+                self._getPSTValue(piece[1], piece[0], dst_idx, False)
+                - self._getPSTValue(piece[1], piece[0], src_idx, False)
+        )
+        eg_delta = (
+                self._getPSTValue(piece[1], piece[0], dst_idx, True)
+                - self._getPSTValue(piece[1], piece[0], src_idx, True)
+        )
+
+        self.pst_mg += mg_delta
+        self.pst_eg += eg_delta
+        undo.pst_mg_delta = mg_delta
+        undo.pst_eg_delta = eg_delta
+
+        if undo.captured_piece:
+            sign = 1 if undo.captured_piece[0] else -1
+            delta = MATERIAL[undo.captured_piece[1]] * sign
+            self.material -= delta
+            undo.material_delta = delta
+
+        self._attacks_dirty = True
         return undo
-
-    # === ORIGINAL undoMove WITH _attacks_dirty INTEGRATION ===
 
     def undoMove(self, undo: UndoRecord):
         piece = undo.moved_piece
 
-        # --- HASH RESTORATION START ---
-
-        # XOR out current state
-        self.hash ^= SIDE_HASH  # Side to move
-
-        # XOR out current EP if any
-        if self.metadata[4] != 0:
-            self.hash ^= EP_HASH[0][self.metadata[4]]
-
-        # XOR out current castling rights
-        for i in range(4):
-            if self.metadata[i]:
-                self.hash ^= CASTLE_HASH[i][self.metadata[i]]
-
-        # Restore all metadata
+        # Restore metadata FIRST
         self.metadata = undo.old_metadata
 
-        # XOR in restored EP
-        if self.metadata[4] != 0:
-            self.hash ^= EP_HASH[0][self.metadata[4]]
+        # Restore material & PST
+        self.material -= undo.material_delta
+        self.pst_mg -= undo.pst_mg_delta
+        self.pst_eg -= undo.pst_eg_delta
 
-        # XOR in restored castling rights
-        for i in range(4):
-            if self.metadata[i]:
-                self.hash ^= CASTLE_HASH[i][self.metadata[i]]
-
-        # XOR out piece from destination
-        self.hash ^= ZOBRIST_TABLE[(piece[1], piece[0], undo.dst[0], undo.dst[1])]
-
-        # --- ORIGINAL UNDO LOGIC ---
+        # Remove piece from dst
         del self.board[undo.dst]
-        piece[2], piece[3] = undo.src
-        self.board[undo.src] = piece
-
-        self.hash ^= ZOBRIST_TABLE[(piece[1], piece[0], undo.src[0], undo.src[1])]
 
         sy, sx = undo.src[1] - 1, undo.src[0] - 1
         dy, dx = undo.dst[1] - 1, undo.dst[0] - 1
 
+        piece[2], piece[3] = undo.src
+        self.board[undo.src] = piece
+
         self.board_np[dy, dx] = 0
         self.board_np[sy, sx] = undo.moved_np
 
-        # --- Restore captured piece ---
-        if undo.captured_piece is not None and undo.captured_square is not None:
+        if piece[1] == 6:
+            self.kings[piece[0]] = undo.old_king_sq
+
+        # Restore rook if castling
+        if undo.rook_move:
+            rook, rook_src, rook_dst = undo.rook_move
+            del self.board[rook_dst]
+            rook[2], rook[3] = rook_src
+            self.board[rook_src] = rook
+
+            ry, rx = rook_src[1] - 1, rook_src[0] - 1
+            rdy, rdx = rook_dst[1] - 1, rook_dst[0] - 1
+            self.board_np[rdy, rdx] = 0
+            self.board_np[ry, rx] = 4 if rook[0] else -4
+
+        # Restore captured piece
+        if undo.captured_piece:
             cap = undo.captured_piece
             cx, cy = undo.captured_square
             self.board[(cx, cy)] = cap
             self.board_np[cy - 1, cx - 1] = undo.captured_np
-            self.hash ^= ZOBRIST_TABLE[(cap[1], cap[0], cx, cy)]
 
-        # --- Restore rook if castling ---
-        if undo.rook_move:
-            rook, r_src, r_dst = undo.rook_move
-            self.hash ^= ZOBRIST_TABLE[(rook[1], rook[0], r_dst[0], r_dst[1])]
-            del self.board[r_dst]
-            self.board_np[r_dst[1] - 1, r_dst[0] - 1] = 0
+        # Rebuild hash once (correct & simple)
+        self.hash = undo.old_hash
 
-            rook[2], rook[3] = r_src
-            self.board[r_src] = rook
-            self.board_np[r_src[1] - 1, r_src[0] - 1] = 4 if rook[0] else -4
-
-            self.hash ^= ZOBRIST_TABLE[(rook[1], rook[0], r_src[0], r_src[1])]
-
-        # === NEW: Invalidate attack cache after undo ===
-        self._attacks_dirty = True  # Invalidate attack cache
+        self._attacks_dirty = True
+        #assert self.hash == self._recalculate_hash()
 
     # === ORIGINAL makeNullMove AND undoNullMove ===
 
@@ -833,7 +795,7 @@ class GameState:
         if self._attacks_dirty:
             self._computeAttackMaps()
 
-        king_sq = self._findKingSquare(white)
+        king_sq = (self.kings[1] if white else self.kings[0])
         if not king_sq:
             return False
 
@@ -845,11 +807,23 @@ class GameState:
         self._attack_cache[True].fill(False)
         self._attack_cache[False].fill(False)
 
-        # Compute pawn attacks (most common)
-        board = self.board
-        for sq, piece in board.items():
-            if piece[1] == 1:  # Pawn
-                self._addPawnAttacks(piece[0], sq[0], sq[1])
+        # Compute attacks for ALL pieces
+        for (x, y), piece in self.board.items():
+            color = piece[0]
+            ptype = piece[1]
+
+            if ptype == 1:
+                self._addPawnAttacks(color, x, y)
+            elif ptype == 2:
+                self._addKnightAttacks(color, x, y)
+            elif ptype == 3:
+                self._addSlidingAttacks(color, x, y, 3)
+            elif ptype == 4:
+                self._addSlidingAttacks(color, x, y, 4)
+            elif ptype == 5:
+                self._addSlidingAttacks(color, x, y, 5)
+            elif ptype == 6:
+                self._addKingAttacks(color, x, y)
 
         self._attacks_dirty = False
 
@@ -862,6 +836,45 @@ class GameState:
             if 1 <= nx <= 8 and 1 <= ny <= 8:
                 attacks[ny - 1, nx - 1] = True
 
+    def _addKnightAttacks(self, color, x, y):
+        """Add knight attacks to cache"""
+        attacks = self._attack_cache[color]
+        for dx, dy in knight_offsets:
+            nx, ny = x + dx, y + dy
+            if 1 <= nx <= 8 and 1 <= ny <= 8:
+                attacks[ny - 1, nx - 1] = True
+
+    def _addKingAttacks(self, color, x, y):
+        """Add king attacks to cache"""
+        attacks = self._attack_cache[color]
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0: continue
+                nx, ny = x + dx, y + dy
+                if 1 <= nx <= 8 and 1 <= ny <= 8:
+                    attacks[ny - 1, nx - 1] = True
+
+    def _addSlidingAttacks(self, color, x, y, piece_type):
+        """Add bishop/rook/queen attacks to cache"""
+        attacks = self._attack_cache[color]
+
+        # Determine direction range
+        if piece_type == 3:
+            start, end = 0, 4  # Bishop
+        elif piece_type == 4:
+            start, end = 4, 8  # Rook
+        else:
+            start, end = 0, 8  # Queen
+
+        for i in range(start, end):
+            dx, dy = directions[i]
+            nx, ny = x + dx, y + dy
+            while 1 <= nx <= 8 and 1 <= ny <= 8:
+                attacks[ny - 1, nx - 1] = True
+                if self.board.get((nx, ny)) is not None: break
+                nx += dx
+                ny += dy
+
     def _findKingSquare(self, white):
         """Faster king lookup"""
         piece = next((p for p in self.board.values() if p[1] == 6 and p[0] == white), None)
@@ -871,6 +884,9 @@ class GameState:
 
     def sideToMove(self):
         return self.metadata[6] == 1
+
+    def PSTScore(self):
+        return self.pst_eg if self.isEndgame() else self.pst_mg
 
     def vectorize(self) -> bytes:
         arr = bytearray()
@@ -882,6 +898,10 @@ class GameState:
         arr.append(0)
         arr.extend(self.metadata)
         return bytes(arr)
+
+    def _recalculate_hash(self):
+        """Force recalculate hash from current state (for testing)"""
+        return get_initial_hash(self)
 
     def __eq__(self, other):
         return isinstance(other, GameState) and self.hash == other.hash
@@ -900,6 +920,7 @@ def main():
         try:
             time.sleep(1.5)
             pieces = web_parser.get_board_data()
+            print(pieces)
             state = GameState(pieces)
             print(state.getScore())
         except Exception as e:
