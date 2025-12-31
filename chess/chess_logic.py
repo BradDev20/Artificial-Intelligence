@@ -1,22 +1,7 @@
-# === OPTIMIZED chess_logic.py (Complete File) ===
-
-import random
+import random, web_parser, time
 from dataclasses import dataclass
 from typing import Optional
 import numpy as np
-
-MATERIAL = (0, 100, 325, 330, 500, 950, 16383)
-
-# Pawn advancement bonus for numpy
-PAWN_ADV_WHITE = (5, 10, 20, 35, 60, 100)
-PAWN_ADV_BLACK = PAWN_ADV_WHITE[::-1]
-
-mobility_bonus = (0, 0, 5, 4, 3, 2, 0)
-_notation = {'p': 1, 'n': 2, 'b': 3, 'r': 4, 'q': 5, 'k': 6}
-knight_offsets = [(1, 2), (2, 1), (2, -1), (1, -2),(-1, -2), (-2, -1), (-2, 1), (-1, 2)]
-
-# Directional offsets, [0-3] for bishop, [4-7] for rook, all for queen
-directions = [(1, 1), (1, -1), (-1, 1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1)]
 
 # PIECE-SQUARE TABLES
 
@@ -161,10 +146,6 @@ eg_king_table = (
     (-53, -34, -21, -11, -28, -14, -24, -43),
 )
 
-# construct 2d arrays into one 3d one
-MGPST = (dummy_table, mg_pawn_table, mg_knight_table, mg_bishop_table, mg_rook_table, mg_queen_table, mg_king_table)
-EGPST = (dummy_table, eg_pawn_table, eg_knight_table, eg_bishop_table, eg_rook_table, eg_queen_table, eg_king_table)
-
 # === ORIGINAL ZOBRIST HASH DEFINITIONS (PRESERVED EXACTLY) ===
 
 # piece_kind (1-6), color (0-1), x (1-8), y (1-8)
@@ -218,26 +199,50 @@ class UndoRecord:
     material_delta: int
     pst_mg_delta: int
     pst_eg_delta: int
+    mobility_delta: int
     old_king_sq: tuple | None
-    old_hash: int
 
-
-# === PERFORMANCE OPTIMIZATION CACHES ===
+# ===============================================
+# PERFORMANCE OPTIMIZATION CACHES AND CONSTANTS
+# ===============================================
 
 # Pre-allocated arrays for attack calculations
-_REUSE_ATTACK_ARRAY = np.zeros((8, 8), dtype=bool)
-_KNIGHT_OFFSETS = np.array([(1, 2), (2, 1), (2, -1), (1, -2),
-                            (-1, -2), (-2, -1), (-2, 1), (-1, 2)], dtype=np.int8)
+# All tables are 8×8, indexed [rank][file], white perspective
+# Black values are mirrored vertically when used
+MGPST = (dummy_table, mg_pawn_table, mg_knight_table, mg_bishop_table, mg_rook_table, mg_queen_table, mg_king_table)
+EGPST = (dummy_table, eg_pawn_table, eg_knight_table, eg_bishop_table, eg_rook_table, eg_queen_table, eg_king_table)
 
+MATERIAL = (0, 100, 325, 330, 500, 950, 16383) # 0, P, N, B, R, Q, K
 
+# Pawn advancement bonus
+PAWN_ADV_WHITE = (0, 5, 10, 20, 35, 60, 100)
+PAWN_ADV_BLACK = PAWN_ADV_WHITE[::-1]
+
+mobility_bonus = (0, 0, 5, 4, 3, 2, 0)
+_notation = {'p': 1, 'n': 2, 'b': 3, 'r': 4, 'q': 5, 'k': 6}
+knight_offsets = [(1, 2), (2, 1), (2, -1), (1, -2),(-1, -2), (-2, -1), (-2, 1), (-1, 2)]
+
+# Directional offsets, [0-3] for bishop, [4-7] for rook, all for queen
+directions = [(1, 1), (1, -1), (-1, 1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1)]
+
+# -------------------------------------------------------------------------
+# Core Board & Game State Management
+# -------------------------------------------------------------------------
 class GameState:
+    """Main chess position representation with incremental evaluation."""
     def __init__(self, board=None):
+        """
+        Initialize board from list of piece descriptors pulled from a chess.com game.
+        Each piece: [color_char, piece_char, file_char, rank_char]
+        """
         self.board = {}
         self.board_np = np.zeros((8, 8), dtype=np.int8)
         self.material = 0
         self.pst_mg = 0
         self.pst_eg = 0
-        self.kings = [None, None]
+        self.kings = [None, None] # white, black
+        self.mobility_white = 0
+        self.mobility_black = 0
 
         # each piece is a bytearray
         # each bytearray is [color(black or white), type, x, y]
@@ -270,60 +275,75 @@ class GameState:
         self.metadata = bytearray(b'\x01\x01\x01\x01\x00\x00\x01')
         self.hash = get_initial_hash(self)
 
-        # === NEW: Performance caches ===
-        self._attack_cache = {True: np.zeros((8, 8), dtype=bool),
-                              False: np.zeros((8, 8), dtype=bool)}
-        self._attacks_dirty = True
-
-    # === ORIGINAL METHODS (PRESERVED EXACTLY) ===
-
     def __str__(self):
         return str([str(piece) for piece in self.board.values()])
 
-    def isSquareAttacked(self, square, byWhite):
+    def isSquareAttacked(self, square, byWhite) -> bool:
+        """
+        Checks if a square is being attacked by the given color.
+        """
         x, y = square
+        board = self.board
 
         # Pawn attacks
-        direction = 1 if byWhite else -1
+        dy = -1 if byWhite else 1
         for dx in (-1, 1):
-            p = self.board.get((x + dx, y - direction))
-            if p is not None and p[1] == 1 and p[0] == byWhite:
+            p = board.get((x + dx, y + dy))
+            if p and p[0] == byWhite and p[1] == 1:
                 return True
 
         # Knight attacks
         for dx, dy in knight_offsets:
-            p = self.board.get((x + dx, y + dy))
-            if p is not None and p[1] == 2 and p[0] == byWhite:
+            p = board.get((x + dx, y + dy))
+            if p and p[0] == byWhite and p[1] == 2:
                 return True
 
-        # Sliding pieces
-        for dx, dy in directions:
-            cx, cy = x + dx, y + dy
-            while 1 <= cx <= 8 and 1 <= cy <= 8:
-                p = self.board.get((cx, cy))
-                if p is not None:
-                    if p[0] == byWhite:
-                        if (
-                                (dx == 0 or dy == 0) and p[1] in (4, 5) or
-                                (dx != 0 and dy != 0) and p[1] in (3, 5)
-                        ):
-                            return True
-                    break
-                cx += dx
-                cy += dy
-
         # King attacks
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                if dx == dy == 0:
-                    continue
-                p = self.board.get((x + dx, y + dy))
-                if p is not None and p[1] == 6 and p[0] == byWhite:
-                    return True
+        for dx, dy in directions:
+            p = board.get((x + dx, y + dy))
+            if p and p[0] == byWhite and p[1] == 6:
+                return True
+
+        # Sliding attacks
+        for dx, dy in directions:
+            nx, ny = x + dx, y + dy
+            while 1 <= nx <= 8 and 1 <= ny <= 8:
+                p = board.get((nx, ny))
+                if p:
+                    if p[0] == byWhite:
+                        if dx == 0 or dy == 0:
+                            if p[1] in (4, 5):  # rook / queen
+                                return True
+                        if dx != 0 and dy != 0:
+                            if p[1] in (3, 5):  # bishop / queen
+                                return True
+                    break
+                nx += dx
+                ny += dy
 
         return False
 
-    def _getPseudoLegalMoves(self, piece):
+    def see(self, src, dst) -> int:
+        """
+        Static Exchange Evaluator, used to test the material trade-off for a capture.
+        :return: Difference of material value between the capturer and victim
+        """
+        board = self.board
+        victim = board.get(dst)
+        if not victim:
+            return 0
+
+        sx = (src % 8) + 1
+        sy = (src // 8) + 1
+        attacker = board[(sx, sy)]
+
+        return MATERIAL[victim[1]] - MATERIAL[attacker[1]]
+
+    def _getPseudoLegalMoves(self, piece) -> list:
+        """
+        Gets all pseudo-legal moves for a given piece.
+        Pseudo-legal moves do not check for king safety.
+        """
         x, y = piece[2], piece[3]
         isWhite = piece[0]
         moves = []
@@ -450,39 +470,63 @@ class GameState:
 
         return moves
 
-    def getLegalMoves(self, piece):
+    def isMovePseudoLegal(self, move) -> bool:
+        """
+        Checks if a given move is legal.
+        Does NOT check for a king in check.
+        """
+        src, dst = move
+        src_sq = ((src % 8) + 1, (src // 8) + 1)
+        dst_sq = ((dst % 8) + 1, (dst // 8) + 1)
+
+        piece = self.board.get(src_sq)
+        if piece is None:
+            return False
+
+        # correct side to move
         if piece[0] != self.sideToMove():
-            return set()
+            return False
 
-        legal = set()
-        pseudo = self._getPseudoLegalMoves(piece)
+        # destination can't hold friendly piece
+        p2 = self.board.get(dst_sq)
+        if p2 and p2[0] == piece[0]:
+            return False
 
-        for move in pseudo:
+        return True
 
-            src_idx = (piece[3] - 1) * 8 + (piece[2] - 1)
-            dst_idx = (move[1] - 1) * 8 + (move[0] - 1)
-
-            undo = self.makeMove((src_idx, dst_idx))
-
-            if not self.kingInCheck(not self.sideToMove()):
-                legal.add(move)
-
-            self.undoMove(undo)
-
-        return legal
-
-    def getAllLegalActions(self, whiteToMove):
+    def getAllLegalActions(self, whiteToMove) -> list:
+        """
+        Gets every possible legal action for the side to move.
+        :return: A list of int tuples (src, dst) representing the legal actions.
+        """
         actions = []
+        pinned = self.getPinnedPieces(self.sideToMove())
+        discovered = self.getDiscoveredCheckPieces(self.sideToMove())
 
-        for piece in tuple(self.board.values()):
+        for (x, y), piece in tuple(self.board.items()):
             if piece[0] != whiteToMove:
                 continue
 
-            x, y = piece[2], piece[3]
+            pin = pinned.get((x, y))
+            disc = discovered.get((x, y))
             src = (y - 1) * 8 + (x - 1)
 
-            for nx, ny in self._getPseudoLegalMoves(piece):
+            for nx, ny in tuple(self._getPseudoLegalMoves(piece)):
+
+                # Pin filtering
+                if pin:
+                    dx, dy = pin
+                    if (nx - x, ny - y) not in ((dx, dy), (-dx, -dy)):
+                        continue
+
+                # Discovery checks filtering
+                if disc:
+                    dx, dy = disc
+                    if (nx - x, ny - y) not in ((dx, dy), (-dx, -dy)):
+                        continue
+
                 dst = (ny - 1) * 8 + (nx - 1)
+
                 undo = self.makeMove((src, dst))
                 if not self.kingInCheck(not self.sideToMove()):
                     actions.append((src, dst))
@@ -493,17 +537,61 @@ class GameState:
     def getPiecePositions(self):
         return [(p[2], p[3], p[0]) for p in self.board.values()]
 
+    def getPinnedPieces(self, white) -> dict:
+        """
+        Gets a dict of pieces for the given color that are "pinned".
+        Pinned pieces cannot move because they would cause a discovery check.
+        """
+        kx, ky = self.kings[white]
+        board = self.board
+
+        pinned = {}
+
+        for dx, dy in directions:
+            x, y = kx + dx, ky + dy
+            blocker_sq = None
+
+            while 1 <= x <= 8 and 1 <= y <= 8:
+                p = board.get((x, y))
+                if not p:
+                    x += dx
+                    y += dy
+                    continue
+
+                if p[0] == white:
+                    if blocker_sq is not None:
+                        break  # two friendly pieces block
+                    blocker_sq = (x, y)
+                else:
+                    if blocker_sq is None:
+                        break
+
+                    pt = p[1]
+                    if dx == 0 or dy == 0:
+                        if pt in (4, 5):  # rook or queen
+                            pinned[blocker_sq] = (dx, dy)
+                    else:
+                        if pt in (3, 5):  # bishop or queen
+                            pinned[blocker_sq] = (dx, dy)
+                    break
+
+                x += dx
+                y += dy
+
+        return pinned
+
     def pieceAt(self, coord) -> Optional[np.ndarray]:
         if coord[0] < 1 or coord[1] < 1 or coord[0] > 8 or coord[1] > 8:
             return None
         return self.board.get(coord)
 
     def isEndgame(self):
+        """
+        Determines if the board is in the endgame(no queens or little material).
+        """
         queens = sum(1 for p in self.board.values() if p[1] == 5)
         major_minor = sum(1 for p in self.board.values() if p[1] in (2, 3, 4))
         return queens == 0 or major_minor <= 4
-
-    # === OPTIMIZED getScore WITH PST INTEGRATION ===
 
     def _getPSTValue(self, piece_type, is_white, square, is_endgame):
         rank = square >> 3  # square // 8
@@ -518,6 +606,10 @@ class GameState:
         return v if is_white else -v
 
     def getScore(self):
+        """
+        Returns current position evaluation in centipawns.
+        Positive = advantage for white.
+        """
         # material + incremental PST
         pst = self.PSTScore()
         score = self.material + pst
@@ -534,35 +626,50 @@ class GameState:
         return score
 
     def _getPawnStructureEval(self):
+        """Evaluates current pawn structure: Doubled pawns and advancement."""
         white_files = [0] * 8
         black_files = [0] * 8
+        score = 0
 
         for p in self.board.values():
             if p[1] == 1:
+                rank = p[3] - 1  # 0-7 (rank index)
                 if p[0]:
                     white_files[p[2] - 1] += 1
+                    if rank < 6:  # Not promoted
+                        score += PAWN_ADV_WHITE[rank]
                 else:
                     black_files[p[2] - 1] += 1
+                    if rank > 0:  # Not promoted
+                        score -= PAWN_ADV_BLACK[rank]
 
-        doubled = 0
         for i in range(8):
             if white_files[i] > 1:
-                doubled -= 12 * (white_files[i] - 1)
+                score -= 12 * (white_files[i] - 1)
             if black_files[i] > 1:
-                doubled += 12 * (black_files[i] - 1)
+                score += 12 * (black_files[i] - 1)
 
-        return doubled
-
-    def _getMobilityEval(self):
-        score = 0
-        for p in self.board.values():
-            if p[1] in (2, 3, 4, 5):  # N B R Q
-                s = 5 if p[1] in (2, 3) else 3
-                score += s if p[0] else -s
         return score
 
+    def _getMobilityEval(self):
+        """Current mobility difference (white positive)"""
+        if self.sideToMove():
+            return self.mobility_white - self.mobility_black
+        else:
+            return self.mobility_black - self.mobility_white
+
+    def _calc_mobility_delta(self, src, dst, piece):
+        """Calculate net mobility change for this specific move."""
+        piece_type = piece[1]
+        weight = mobility_bonus[piece_type]
+
+        # Heuristic: distance moved * weight
+        dx = abs(dst[0] - src[0])
+        dy = abs(dst[1] - src[1])
+        return weight * (dx + dy)
+
     def _getKingSafetyEval(self):
-        """Simplified king safety evaluation"""
+        """Simple evaluator for king safety."""
         if self.isEndgame():
             return 0
 
@@ -573,10 +680,12 @@ class GameState:
             return -15
         return 0
 
-    # === ORIGINAL makeMove WITH _attacks_dirty INTEGRATION ===
-
     def makeMove(self, action) -> UndoRecord:
-        # === Setup ===
+        """
+        Execute move given as (src_square_0-63, dst_square_0-63)
+        :return: UndoRecord for fast undo
+        """
+
         src_idx, dst_idx = action
         src = ((src_idx % 8) + 1, (src_idx // 8) + 1)
         dst = ((dst_idx % 8) + 1, (dst_idx // 8) + 1)
@@ -586,7 +695,6 @@ class GameState:
         piece = self.board[src]
         captured = self.board.get(dst)
         old_meta = bytearray(self.metadata)
-        old_castle = old_meta[:4]
 
         # Precompute castling info
         is_castle = (piece[1] == 6 and abs(dst[0] - src[0]) == 2)
@@ -604,7 +712,7 @@ class GameState:
             rook_move=None,
             material_delta=0, pst_mg_delta=0, pst_eg_delta=0,
             old_king_sq=self.kings[piece[0]] if piece[1] == 6 else None,
-            old_hash=self.hash
+            mobility_delta=0
         )
 
         # === Structural Board Updates ===
@@ -698,9 +806,6 @@ class GameState:
         # Flip side
         self.metadata[6] ^= 1
 
-        # Recompute hash (simple + safe)
-        self.hash = self._recalculate_hash()
-
         # === Evaluation updates ===
         mg_delta = (
                 self._getPSTValue(piece[1], piece[0], dst_idx, False)
@@ -722,10 +827,20 @@ class GameState:
             self.material -= delta
             undo.material_delta = delta
 
-        self._attacks_dirty = True
+        # MOBILITY UPDATE
+        mobility_delta = self._calc_mobility_delta(src, dst, piece)
+        if piece[0]:  # White
+            self.mobility_white += mobility_delta
+        else:  # Black
+            self.mobility_black -= mobility_delta
+
+        # Recompute hash (simple + safe)
+        self.hash = self._recalculate_hash()
+
         return undo
 
     def undoMove(self, undo: UndoRecord):
+        """Revert move using previously saved UndoRecord"""
         piece = undo.moved_piece
 
         # Restore metadata FIRST
@@ -770,125 +885,143 @@ class GameState:
             self.board[(cx, cy)] = cap
             self.board_np[cy - 1, cx - 1] = undo.captured_np
 
+        # MOBILITY UPDATE
+        if hasattr(undo, 'mobility_delta') and undo.mobility_delta is not None:
+            if undo.moved_piece[0]:  # White
+                self.mobility_white -= undo.mobility_delta
+            else:  # Black
+                self.mobility_black += undo.mobility_delta  # Undo negative
+
         # Rebuild hash once (correct & simple)
-        self.hash = undo.old_hash
-
-        self._attacks_dirty = True
-        #assert self.hash == self._recalculate_hash()
-
-    # === ORIGINAL makeNullMove AND undoNullMove ===
+        self.hash = self._recalculate_hash()
 
     def makeNullMove(self) -> bytearray:
+        """
+        Makes a "null move" on the board.
+        Equivalent to passing a turn.
+        :return: The old metadata of the board pre-move
+        """
         undo = bytearray(self.metadata)
         self.metadata[6] ^= 1
-        self.hash ^= SIDE_HASH
+        self.metadata[4] = 0
+        self.metadata[5] = 0
+        self.hash = self._recalculate_hash()
         return undo
 
     def undoNullMove(self, undo):
+        """
+        Undoes a "null move" on the board.
+        :param undo: The metadata returned from makeNullMove()
+        """
         self.metadata = undo
-        self.hash ^= SIDE_HASH
-
-    # === OPTIMIZED kingInCheck ===
+        self.hash = self._recalculate_hash()
 
     def kingInCheck(self, white) -> bool:
-        """Optimized with attack map caching"""
-        if self._attacks_dirty:
-            self._computeAttackMaps()
+        """
+        Checks whether a king is in check.
+        :param white: Whether the White king will be checked,
+        """
+        kx, ky = self.kings[white]
+        enemy = not white
+        board = self.board
 
-        king_sq = (self.kings[1] if white else self.kings[0])
-        if not king_sq:
-            return False
+        # Pawn check
+        if enemy:  # white pawns
+            if board.get((kx - 1, ky - 1), (None,))[0] == True:
+                if board[(kx - 1, ky - 1)][1] == 1:
+                    return True
+            if board.get((kx + 1, ky - 1), (None,))[0] == True:
+                if board[(kx + 1, ky - 1)][1] == 1:
+                    return True
+        else:  # black pawns
+            if board.get((kx - 1, ky + 1), (None,))[0] == False:
+                if board[(kx - 1, ky + 1)][1] == 1:
+                    return True
+            if board.get((kx + 1, ky + 1), (None,))[0] == False:
+                if board[(kx + 1, ky + 1)][1] == 1:
+                    return True
 
-        return self._attack_cache[not white][king_sq[1] - 1, king_sq[0] - 1]
-
-    def _computeAttackMaps(self):
-        """Compute both attack maps once per node change"""
-        # Clear existing attack maps
-        self._attack_cache[True].fill(False)
-        self._attack_cache[False].fill(False)
-
-        # Compute attacks for ALL pieces
-        for (x, y), piece in self.board.items():
-            color = piece[0]
-            ptype = piece[1]
-
-            if ptype == 1:
-                self._addPawnAttacks(color, x, y)
-            elif ptype == 2:
-                self._addKnightAttacks(color, x, y)
-            elif ptype == 3:
-                self._addSlidingAttacks(color, x, y, 3)
-            elif ptype == 4:
-                self._addSlidingAttacks(color, x, y, 4)
-            elif ptype == 5:
-                self._addSlidingAttacks(color, x, y, 5)
-            elif ptype == 6:
-                self._addKingAttacks(color, x, y)
-
-        self._attacks_dirty = False
-
-    def _addPawnAttacks(self, color, x, y):
-        """Add pawn attacks to cache"""
-        attacks = self._attack_cache[color]
-        direction = 1 if color else -1
-        for dx in (-1, 1):
-            nx, ny = x + dx, y + direction
-            if 1 <= nx <= 8 and 1 <= ny <= 8:
-                attacks[ny - 1, nx - 1] = True
-
-    def _addKnightAttacks(self, color, x, y):
-        """Add knight attacks to cache"""
-        attacks = self._attack_cache[color]
+        # Knight checks
         for dx, dy in knight_offsets:
-            nx, ny = x + dx, y + dy
-            if 1 <= nx <= 8 and 1 <= ny <= 8:
-                attacks[ny - 1, nx - 1] = True
+            p = board.get((kx + dx, ky + dy))
+            if p and p[0] == enemy and p[1] == 2:
+                return True
 
-    def _addKingAttacks(self, color, x, y):
-        """Add king attacks to cache"""
-        attacks = self._attack_cache[color]
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                if dx == 0 and dy == 0: continue
-                nx, ny = x + dx, y + dy
-                if 1 <= nx <= 8 and 1 <= ny <= 8:
-                    attacks[ny - 1, nx - 1] = True
+        # Sliding checks
+        for dx, dy in directions:
+            x, y = kx + dx, ky + dy
+            while 1 <= x <= 8 and 1 <= y <= 8:
+                p = board.get((x, y))
+                if p:
+                    if p[0] == enemy:
+                        pt = p[1]
+                        if dx == 0 or dy == 0:
+                            if pt == 4 or pt == 5:
+                                return True
+                        else:
+                            if pt == 3 or pt == 5:
+                                return True
+                    break
+                x += dx
+                y += dy
 
-    def _addSlidingAttacks(self, color, x, y, piece_type):
-        """Add bishop/rook/queen attacks to cache"""
-        attacks = self._attack_cache[color]
+        return False
 
-        # Determine direction range
-        if piece_type == 3:
-            start, end = 0, 4  # Bishop
-        elif piece_type == 4:
-            start, end = 4, 8  # Rook
-        else:
-            start, end = 0, 8  # Queen
+    def getDiscoveredCheckPieces(self, white):
+        """
+        Gets pieces that cause a "discovery check".
+        Discovery checks are checks that happen when the piece moves and unblocks another piece's path to the king.
+        """
+        ekx, eky = self.kings[not white]
+        board = self.board
 
-        for i in range(start, end):
-            dx, dy = directions[i]
-            nx, ny = x + dx, y + dy
-            while 1 <= nx <= 8 and 1 <= ny <= 8:
-                attacks[ny - 1, nx - 1] = True
-                if self.board.get((nx, ny)) is not None: break
-                nx += dx
-                ny += dy
+        discovered = {}
 
-    def _findKingSquare(self, white):
-        """Faster king lookup"""
-        piece = next((p for p in self.board.values() if p[1] == 6 and p[0] == white), None)
-        return (piece[2], piece[3]) if piece is not None else None
+        for dx, dy in directions:
+            x = ekx + dx
+            y = eky + dy
+            attacker_sq = None
 
-    # === ORIGINAL REMAINING METHODS ===
+            while 1 <= x <= 8 and 1 <= y <= 8:
+                p = board.get((x, y))
+                if not p:
+                    x += dx
+                    y += dy
+                    continue
+
+                if p[0] == white:
+                    pt = p[1]
+                    if dx == 0 or dy == 0:
+                        if pt in (4,5):
+                            attacker_sq = (x, y)
+                        else:
+                            break
+                    else:
+                        if pt in (3,5):
+                            attacker_sq = (x, y)
+                        else:
+                            break
+                else:
+                    if attacker_sq:
+                        discovered[(x, y)] = (-dx, -dy)
+                    break
+
+                x += dx
+                y += dy
+
+        return discovered
 
     def sideToMove(self):
         return self.metadata[6] == 1
 
     def PSTScore(self):
+        """Returns current PST value"""
         return self.pst_eg if self.isEndgame() else self.pst_mg
 
     def vectorize(self) -> bytes:
+        """
+        Converts the board into a vector of bytes.
+        """
         arr = bytearray()
         sorted_pieces = sorted(self.board, key=lambda p: (p[3], p[2]))
         for piece in sorted_pieces:
@@ -900,17 +1033,14 @@ class GameState:
         return bytes(arr)
 
     def _recalculate_hash(self):
-        """Force recalculate hash from current state (for testing)"""
+        """
+        Force recalculate hash from current state.
+        Expensive but ensures there are no XOR errors.
+        """
         return get_initial_hash(self)
 
     def __eq__(self, other):
         return isinstance(other, GameState) and self.hash == other.hash
-
-
-# === ORIGINAL main() FUNCTION ===
-import web_parser
-import time
-
 
 def main():
     web_parser.open_site()

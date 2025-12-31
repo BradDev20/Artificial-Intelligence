@@ -1,7 +1,6 @@
 import time
 import web_parser, cProfile, pstats
 from chess_logic import GameState
-import numpy as np
 
 
 prev_data = None
@@ -15,10 +14,14 @@ UPPER = 2
 memo = {}
 nodes_explored = 0
 
-piece_values = np.array([0, 100, 325, 330, 500, 950, 16383], dtype=np.int16)
+piece_values = (0, 100, 325, 330, 500, 950, 16383)
 names = ["", "Pawn", "Knight", "Bishop", "Rook", "Queen", "King"]
 
-def mvv_lva(state, move):
+def mvv_lva(state, move) -> int:
+    """
+    Most Valuable Victim - Least Valuable Attacker heuristic.
+    :return: higher score for good captures (big piece captured by small piece)
+    """
     src, dst = move
     attacker = state.pieceAt(((src % 8) + 1, (src // 8) + 1))
     victim = state.pieceAt(((dst % 8) + 1, (dst // 8) + 1))
@@ -26,21 +29,27 @@ def mvv_lva(state, move):
         return 0
     return 10 * piece_values[victim[1]] - piece_values[attacker[1]]
 
-def _moveScore(state, action):
-    src, dst = action
-    piece = state.pieceAt(((src % 8) + 1, (src // 8) + 1))
-    captured = state.pieceAt(((dst % 8) + 1, (dst // 8) + 1))
-
-    if captured and piece:
-        # Higher values for capturing big pieces with small pieces
-        return (piece_values[captured[1]] * 10) - piece_values[piece[1]]
-    return 0
-
 def _orderMoves(state, moves, depth, memo_move):
+    """
+    Orders moves for better alpha-beta efficiency.
+
+    Ordering priority (highest first):
+    1. Hash table best move (if available)
+    2. Killer moves at current depth
+    3. Good captures (sorted by MVV-LVA)
+    4. Quiet moves (in original order)
+
+    :param state: current GameState
+    :param moves: list of raw legal moves (src,dst 0-63)
+    :param depth: current search depth (for killers)
+    :param memo_move: best move from memo (if any)
+
+    :return: list of moves in recommended search order
+    """
     ordered = []
 
     # 1. Memo move
-    if memo_move and memo_move in moves:
+    if memo_move and memo_move in moves and state.isMovePseudoLegal(memo_move):
         ordered.append(memo_move)
         moves.remove(memo_move)
 
@@ -68,7 +77,7 @@ def _orderMoves(state, moves, depth, memo_move):
     return ordered
 
 
-def _quiescence(state, alpha, beta, color):
+def _quiescence(state, alpha, beta, color) -> int:
     """
     Performs quiescence search on the GameState.
     :param state: the GameState to be analyzed
@@ -77,7 +86,7 @@ def _quiescence(state, alpha, beta, color):
     :param color: whether White is being analyzed
     :return:
     """
-    stand_pat = color * state.getScore()
+    stand_pat = state.getScore()
 
     if stand_pat >= beta:
         return beta
@@ -88,17 +97,15 @@ def _quiescence(state, alpha, beta, color):
 
     for move in moves:
 
-        # Don't look at 'noisy' moves(piece is captured)
+        # Only look at legal 'noisy' moves(piece is captured)
         src, dst = move
-        if state.pieceAt(((dst % 8) + 1, (dst // 8) + 1)) is None:
+        if state.pieceAt(((dst % 8) + 1, (dst // 8) + 1)) is None or state.pieceAt(((src % 8) + 1, (src // 8) + 1)) is None:
+            continue
+
+        if state.see(src, dst) < 0:
             continue
 
         undo = state.makeMove(move)
-
-        if state.kingInCheck(not state.sideToMove()):
-            state.undoMove(undo)
-            continue
-
         score = -_quiescence(state, -beta, -alpha, -color)
         state.undoMove(undo)
 
@@ -110,6 +117,18 @@ def _quiescence(state, alpha, beta, color):
 
 
 def negamax(state, depth, alpha, beta, color):
+    """
+    Main search function - negamax with alpha-beta pruning,
+    transposition table, null move pruning, move ordering and killer heuristic.
+
+    :param state:      current GameState (will be modified & restored)
+    :param depth:      remaining plies to search
+    :param alpha:      best score maximizer can guarantee
+    :param beta:       best score minimizer can guarantee
+    :param color:      +1 for white-to-move perspective, -1 for black
+
+    :return: (score, best_move) tuple score is from perspective of the side who was to move. best_move is the best move found (0-63 src,dst tuple) or None
+    """
     global nodes_explored
     nodes_explored += 1
 
@@ -135,6 +154,7 @@ def negamax(state, depth, alpha, beta, color):
     # 3. BASE CASE: CHECKMATE / STALEMATE DETECTION
     # We must generate moves to know if the game is over.
     moves = state.getAllLegalActions(state.sideToMove())
+    #print(moves)
 
     if not moves:
         if state.kingInCheck(state.sideToMove()):
@@ -148,6 +168,7 @@ def negamax(state, depth, alpha, beta, color):
     if depth == 0:
         return _quiescence(state, alpha, beta, color), None
 
+
     # 5. NULL MOVE PRUNING (Optional: Disable if debugging)
     if depth >= 3 and not state.kingInCheck(state.sideToMove()) and not state.isEndgame():
         undo = state.makeNullMove()
@@ -159,13 +180,14 @@ def negamax(state, depth, alpha, beta, color):
             memo[h] = (depth, beta, LOWER, None)
             return beta, None
 
+
+
     # 6. MOVE ORDERING
     memo_move = entry[3] if entry else None
     moves = _orderMoves(state, moves, depth, memo_move)
 
     best_value = -float('inf')
     best_move = None
-
     # 7. RECURSION
     for move in moves:
         undo = state.makeMove(move)
@@ -227,7 +249,10 @@ if __name__ == '__main__':
     color = 1 if playerIsWhite else -1
     pr = cProfile.Profile()
 
-    def decodeAction(state, action):
+    def decodeAction(state, action) -> str:
+        """
+        Converts an action for a given into something readable.
+        """
 
         src_x = (action[0] % 8) + 1
         src_y = (action[0] // 8) + 1
@@ -250,6 +275,7 @@ if __name__ == '__main__':
     while True:
         time.sleep(1.5)
         pieces = web_parser.get_board_data()
+        #print(pieces)
         state = GameState(pieces)
         whiteMovedLast = web_parser.determine_last_moved() == 'w'
         state.metadata[6] = 1 if not whiteMovedLast else 0
